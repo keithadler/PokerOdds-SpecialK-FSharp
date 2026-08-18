@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningLevel>5</WarningLevel>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <Authors>Keith Adler</Authors>
+    <Product>PokerOdds</Product>
+    <Copyright>Copyright 2010 Kenneth J. Shackleton; F# port and extensions copyright the PokerOdds contributors</Copyright>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/mrunks/PokerOdds-SpecialK-FSharp</RepositoryUrl>
+  </PropertyGroup>
+</Project>

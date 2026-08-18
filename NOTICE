@@ -1,0 +1,14 @@
+PokerOdds-SpecialK-FSharp
+Copyright 2014-2026 the PokerOdds-SpecialK-FSharp contributors
+
+This product includes software derived from SKPokerEval:
+
+    SKPokerEval
+    Copyright 2010 Kenneth J. Shackleton
+    https://github.com/kennethshackleton/SKPokerEval
+    Licensed under the Apache License, Version 2.0
+
+The perfect-hash face weights, the flush bit weights, the seven-card key
+circumference and the structure of the rank tables in src/PokerOdds.Core are
+taken from that work. The F# implementation, the card and hand model, the
+equity calculator, the command line tool and the test suite are original.

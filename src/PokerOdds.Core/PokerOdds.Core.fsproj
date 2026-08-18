@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>PokerOdds.Core</AssemblyName>
+    <RootNamespace>PokerOdds.SpecialK</RootNamespace>
+    <PackageId>PokerOdds.Core</PackageId>
+    <Description>A fast Texas Hold'em hand evaluator and equity calculator: an F# port of Kenneth J. Shackleton's SKPokerEval perfect-hash tables.</Description>
+    <Optimize Condition="'$(Configuration)' == 'Release'">true</Optimize>
+    <Tailcalls Condition="'$(Configuration)' == 'Release'">true</Tailcalls>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Constants.fs" />
+    <Compile Include="Cards.fs" />
+    <Compile Include="FiveEval.fs" />
+    <Compile Include="SevenEval.fs" />
+    <Compile Include="Hand.fs" />
+    <Compile Include="Equity.fs" />
+  </ItemGroup>
+
+</Project>
