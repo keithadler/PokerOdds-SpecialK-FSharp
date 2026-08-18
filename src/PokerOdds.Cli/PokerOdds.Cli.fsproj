@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>pokerodds</AssemblyName>
+    <RootNamespace>PokerOdds.Cli</RootNamespace>
+    <ToolCommandName>pokerodds</ToolCommandName>
+    <PackAsTool>true</PackAsTool>
+    <PackageId>PokerOdds.Cli</PackageId>
+    <Description>Command line Texas Hold'em hand evaluator and equity calculator.</Description>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../PokerOdds.Core/PokerOdds.Core.fsproj" />
+  </ItemGroup>
+
+</Project>

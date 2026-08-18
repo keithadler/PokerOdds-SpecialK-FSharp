@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, modernize]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore PokerOdds.sln
+
+      - name: Build
+        run: dotnet build PokerOdds.sln -c Release --no-restore
+
+      # The seven-card evaluator is checked against the five-card reference on all
+      # 133,784,560 hands. It takes about twenty seconds and is the whole point of
+      # the port, so it runs on every commit rather than on a schedule.
+      - name: Test
+        run: dotnet test PokerOdds.sln -c Release --no-build --verbosity normal
+        env:
+          POKERODDS_EXHAUSTIVE: '1'
+
+      - name: Self-check the published tables
+        run: dotnet run --project src/PokerOdds.Cli -c Release --no-build -- verify
+
+      - name: Smoke-test the CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          run() { dotnet run --project src/PokerOdds.Cli -c Release --no-build -- "$@"; }
+          run rank AsKsQsJsTs
+          run equity --hand AsKs --hand QdQh
+          run equity --hand AhKd --hand 7c7s --board 2c7d9h
+          run equity --hand AsAd --opponents 5 --trials 50000
