@@ -109,11 +109,17 @@ module Card =
         | 'c' | '♣' -> ValueSome Suit.Clubs
         | _ -> ValueNone
 
-    /// Parse a single card such as "As", "Kd" or "10h".
+    // F# 9 stopped treating `string` as nullable, so `match text with | null` no longer
+    // compiles cleanly under it. Comparing the reference through `obj` says the same
+    // thing and builds on both compilers.
+    let inline private isMissing (text: string) = obj.ReferenceEquals(text, null)
+
+    /// Parse a single card such as "As", "Kd" or "10h". Null and malformed input give
+    /// `ValueNone`.
     let tryParse (text: string) =
-        match text with
-        | null -> ValueNone
-        | _ ->
+        if isMissing text then
+            ValueNone
+        else
             let t = text.Trim()
             // Accept "10x" as an alias for "Tx".
             let t = if t.Length = 3 && t.StartsWith "10" then "T" + string t.[2] else t
@@ -132,10 +138,12 @@ module Card =
         | ValueNone -> invalidArg (nameof text) (sprintf "'%s' is not a card; expected a form like 'As' or 'Td'." text)
 
     /// Parse a run of cards written with or without separators, e.g. "AsKs" or "As Ks".
+    /// Null gives `ValueNone`; empty or blank text is no cards at all, so it gives an
+    /// empty array.
     let tryParseMany (text: string) =
-        match text with
-        | null -> ValueNone
-        | _ ->
+        if isMissing text then
+            ValueNone
+        else
             let compact = String(text.ToCharArray() |> Array.filter (fun c -> not (Char.IsWhiteSpace c) && c <> ','))
 
             let rec loop i acc =

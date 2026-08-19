@@ -59,3 +59,13 @@ let ``a card index outside the deck is rejected`` () =
 let ``better cards compare greater`` () =
     Assert.True(Card.parse "As" > Card.parse "Ks")
     Assert.True(Card.parse "2c" < Card.parse "2s")
+
+[<Fact>]
+let ``null is not a card, but empty text is no cards at all`` () =
+    // Pinned because the null checks have to be written around F# 9's nullness rules,
+    // and it would be easy to turn the empty case into a failure while doing so.
+    Assert.Equal(ValueNone, Card.tryParse null)
+    Assert.Equal(ValueNone, Card.tryParseMany null)
+    Assert.Equal(ValueSome [||], Card.tryParseMany "")
+    Assert.Equal(ValueSome [||], Card.tryParseMany "   ")
+    Assert.Equal<Card[]>([||], Card.parseMany "")
