@@ -27,6 +27,8 @@ type EquityResult =
       Trials: int64
       /// True when every possible board was enumerated, so the numbers are exact.
       Exhaustive: bool
+      /// Time spent on this calculation. The evaluators' one-time table construction
+      /// is excluded, so the first call is comparable with later ones.
       Elapsed: TimeSpan }
 
 /// What to work out the equity of.
@@ -128,7 +130,9 @@ module Equity =
         let available = DECK_SIZE - all.Length
 
         if needed > available then
-            invalidArg "Hands" (sprintf "%d cards must be dealt but only %d remain in the deck." needed available)
+            invalidArg
+                "Hands"
+                (sprintf "%d cards still have to be dealt but only %d remain in the deck." needed available)
 
         unknown, all
 
@@ -184,13 +188,15 @@ module Equity =
         if unknown > 0 then
             invalidArg "Hands" "Exhaustive enumeration needs every player's hole cards; use monteCarlo instead."
 
+        // Touched before the clock starts: building the tables is a one-time cost and
+        // reporting it as part of this calculation makes the first call look slow.
+        let seven = SevenEval.Shared
         let stopwatch = Stopwatch.StartNew()
         let n = request.Hands.Length
         let holes = request.Hands |> Array.map (Array.map (fun (c: Card) -> c.Index))
         let known = request.Board |> Array.map (fun c -> c.Index)
         let deck = remainingDeck all
         let need = BOARD_CARDS - known.Length
-        let seven = SevenEval.Shared
         let total = Tally(n)
 
         // A hand's key is the sum of its cards' weights, so the parts that do not vary
@@ -269,6 +275,7 @@ module Equity =
             invalidArg (nameof trials) "At least one trial is needed."
 
         let _, all = validate request
+        let seven = SevenEval.Shared
         let stopwatch = Stopwatch.StartNew()
         let n = request.Hands.Length
         let holes = request.Hands |> Array.map (Array.map (fun (c: Card) -> c.Index))
@@ -277,7 +284,6 @@ module Equity =
         let boardNeed = BOARD_CARDS - known.Length
         let unknownPlayers = [| for p in 0 .. n - 1 do if holes.[p].Length = 0 then yield p |]
         let draws = boardNeed + unknownPlayers.Length * HOLE_CARDS
-        let seven = SevenEval.Shared
         let cardKey = Array.init DECK_SIZE seven.CardKey
         let total = Tally(n)
 

@@ -63,3 +63,26 @@ let ``hands of the wrong size are rejected`` () =
 
     Assert.Throws<System.ArgumentException>(fun () -> Hand.rank (Card.parseMany "AsKsQsJsTs9s8s7s") |> ignore)
     |> ignore
+
+[<Fact>]
+let ``six-card ranks agree with the best of their five-card subsets`` () =
+    // The six-card path is the only one without a table behind it, so it is checked
+    // against every subset of a decent sample of hands.
+    let random = System.Random 4242
+    let bag = Array.init DECK_SIZE id
+
+    for _ in 1..20_000 do
+        for i in 0..5 do
+            let j = random.Next(i, DECK_SIZE)
+            let t = bag.[i]
+            bag.[i] <- bag.[j]
+            bag.[j] <- t
+
+        let six = Array.init 6 (fun i -> Card bag.[i])
+
+        let expected =
+            [ for skip in 0..5 -> six |> Array.indexed |> Array.filter (fst >> (<>) skip) |> Array.map snd ]
+            |> List.map Hand.rank
+            |> List.max
+
+        Assert.Equal(expected, Hand.rank six)

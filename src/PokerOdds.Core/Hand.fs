@@ -86,8 +86,9 @@ module Hand =
             let five = FiveEval.Shared
             let mutable best = 0us
 
+            let t = Array.zeroCreate<int> 5
+
             for skip in 0..5 do
-                let t = Array.zeroCreate<int> 5
                 let mutable m = 0
 
                 for k in 0..5 do

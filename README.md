@@ -6,7 +6,7 @@ perfect-hash tables.
 
 Ranking a seven-card hand costs one array lookup — around **250 million hands per second**
 on a single core — which is what makes exhaustive equity enumeration practical: all
-1,712,304 possible boards for a preflop match-up are dealt and scored in about six
+1,712,304 possible boards for a preflop match-up are dealt and scored in single-digit
 milliseconds.
 
 ```
@@ -176,13 +176,18 @@ CI runs the exhaustive check on Linux, Windows and macOS on every commit.
 | `FiveEval.GetRank` | 238,000,000 |
 | `FiveEval.GetRankFromSeven` (best of 21) | 5,800,000 |
 
-Equity, best of several runs, after the tables are built:
+Equity, best of several runs in a warmed process, tables already built:
 
 | | |
 | --- | ---: |
 | Preflop heads up (1,712,304 boards) | 6.2 ms |
 | Monte Carlo, 2,000,000 trials | 16 ms |
 | Building the tables, once per process | 30 ms |
+
+A single `pokerodds equity` invocation will report more like 60 ms for that first figure,
+because the enumeration runs once and the JIT never gets a reason to optimise it properly.
+`EquityResult.Elapsed` excludes table construction but not that warm-up, so treat one-shot
+timings as a ceiling. Anything long-running sees the warmed numbers.
 
 These are bound by memory, not arithmetic, so treat them as an upper bound rather than
 a promise. Every hand lands somewhere effectively random in the 9.1 MB seven-card rank
@@ -234,15 +239,30 @@ That result is hardware-specific and would likely reverse on a machine with a sm
 last-level cache, where 9.1 MB does not stay resident. Anyone hitting that case should
 reach for the compressed layout; it is a real win there, just not here.
 
-What is left, in rough order of what it would be worth:
+What is left, and what it is actually worth. Measuring where the time goes changes the
+answer: in a two-player preflop enumeration, **ranking the hands is only about a quarter
+of the work**. Walking the 1.7 million boards and settling each pot is the other three
+quarters. That rules out the change that looks most attractive on paper.
 
-* **Suit isomorphism.** Many boards are the same hand up to a relabelling of suits.
-  Collapsing them is exact, not an approximation, and cuts the work several-fold — a
-  bigger factor than anything above.
-* **Evaluating several boards at once** with SIMD gathers, to overlap the memory
-  latency that currently sets the ceiling.
-* **Skipping construction entirely** by shipping the tables as a resource, if the ~30 ms
-  startup ever matters more than the 9 MB.
+* **Suit isomorphism.** Many boards are the same hand up to a relabelling of suits, and
+  collapsing them is exact rather than an approximation. But it only saves evaluation,
+  and the group of suit permutations fixing two specific holdings is usually of order one
+  or two — `AsKs` against `QdQh` admits only swapping diamonds and hearts. Even a perfect
+  halving would take about 10% off the total, before paying for the test that decides
+  whether a board is its orbit's representative. It becomes worthwhile with many players,
+  where evaluation grows with the field and the walk does not.
+* **Flattening the innermost loop** so that the last board card costs no call was tried,
+  and measured three times *slower* — presumably the larger loop body stopped fitting
+  whatever the previous shape fitted in.
+* **SIMD gathers**, to overlap the memory latency that sets the ceiling. `Vector256`
+  gathers are x86-only; ARM has no equivalent instruction, so this was not tried.
+* **Shipping the tables as a resource** rather than building them, if the ~30 ms of
+  construction ever matters more than the 9 MB.
+
+A caveat on all of the above: run-to-run variance on the machine these were measured on
+is wide — a factor of two between runs of identical code is not unusual under load. Every
+figure quoted here is a best-of-several, and anything under about 20% should be treated as
+unproven rather than real.
 
 ## Credit and licence
 
