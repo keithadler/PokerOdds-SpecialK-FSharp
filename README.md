@@ -4,7 +4,7 @@ A fast Texas Hold'em hand evaluator and equity calculator in F#, built on an F# 
 [Kenneth J. Shackleton's SKPokerEval](https://github.com/kennethshackleton/SKPokerEval)
 perfect-hash tables.
 
-Ranking a seven-card hand costs one array lookup — around **40 million hands per second**
+Ranking a seven-card hand costs one array lookup — around **200 million hands per second**
 on a single core — which is what makes exhaustive equity enumeration practical: every
 one of the 1,712,304 possible boards for a preflop match-up is dealt in about a tenth
 of a second.
@@ -135,9 +135,12 @@ pattern*, which turns the sum into an index straight into a table of precomputed
   so the sum over seven cards identifies the suit split exactly, and it is packed into the
   low nine bits of the same key the face weights build.
 
-The C++ original ships its tables as generated headers. This port builds the equivalent
-tables at startup from the five-card evaluator instead, which keeps the source readable
-and means the seven-card path is derived from — and checkable against — the simpler one.
+The C++ original ships its tables as generated headers, and compresses the seven-card
+ranks through a hash and an offsets table. This port builds the equivalent tables at
+startup from the five-card evaluator instead, and indexes the folded key directly. That
+keeps the source readable and means the seven-card path is derived from — and checkable
+against — the simpler one, at the cost of a much larger table; see
+[Where the remaining speed is](#where-the-remaining-speed-is).
 
 ## Verification
 
@@ -169,11 +172,34 @@ CI runs the exhaustive check on Linux, Windows and macOS on every commit.
 
 | | Hands per second |
 | --- | ---: |
-| `SevenEval.GetRank` | 40,000,000 |
-| `FiveEval.GetRank` | 178,000,000 |
-| `FiveEval.GetRankFromSeven` (best of 21) | 5,800,000 |
+| `SevenEval.GetRank` | 206,000,000 |
+| `FiveEval.GetRank` | 229,000,000 |
+| `FiveEval.GetRankFromSeven` (best of 21) | 5,700,000 |
 
-Equity enumeration is parallel across cores.
+These are bound by memory, not arithmetic, so treat them as an upper bound rather than
+a promise. Every hand lands somewhere effectively random in the 9.1 MB seven-card rank
+table, and an Apple M-series last-level cache holds far more of that than a typical x86
+server's does. Equity enumeration is parallel across cores.
+
+### Where the remaining speed is
+
+Two things are knowingly left on the table.
+
+**The rank table is 85 times larger than it needs to be.** Upstream compresses the
+seven-card ranks into `rank_hash` plus an `offsets` indirection — 30,230 and 16,384
+entries, about 110 KB all told, which sits in L2 on any machine. Indexing the folded key
+directly, as this port does, costs 4,565,145 entries — 9.1 MB, which does not. The
+direct table is what makes the port readable and lets the seven-card path be derived
+from and checked against the five-card one, so it is a deliberate trade, but it is the
+single biggest lever on raw lookup speed.
+
+**Equity enumeration rebuilds each key from scratch.** `Equity.exact` currently reaches
+about 34 million evaluations per second across all cores while one core alone can do 206
+million, because every board re-reads all seven card weights for every player. Since a
+hand's key is just the sum of its cards' weights, a player's two hole cards and the board
+can each be summed once and added — one addition per player per board instead of seven
+lookups — and the board's partial sum can be carried down the enumeration's loop nest
+rather than rebuilt. There is a large factor here for anyone who needs it.
 
 ## Credit and licence
 

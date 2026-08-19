@@ -284,38 +284,95 @@ let private runBench args =
     let five = FiveEval.Shared
     let seven = SevenEval.Shared
     let random = Random 1
+    let hands = 200_000
 
-    // Pre-deal so the timing measures evaluation rather than shuffling.
-    let deals =
-        Array.init 200_000 (fun _ ->
-            let bag = Array.init DECK_SIZE id
+    // One flat array, so the loop below is not really measuring the cost of
+    // chasing pointers to 200,000 separate little arrays.
+    let deals = Array.zeroCreate<int> (hands * 7)
+    let bag = Array.init DECK_SIZE id
 
-            for i in 0..6 do
-                let j = random.Next(i, DECK_SIZE)
-                let t = bag.[i]
-                bag.[i] <- bag.[j]
-                bag.[j] <- t
+    for h in 0 .. hands - 1 do
+        for i in 0..6 do
+            let j = random.Next(i, DECK_SIZE)
+            let t = bag.[i]
+            bag.[i] <- bag.[j]
+            bag.[j] <- t
 
-            Array.sub bag 0 7)
+        for i in 0..6 do
+            deals.[h * 7 + i] <- bag.[i]
 
-    let measure name (evaluate: int[] -> int) =
-        let stopwatch = Stopwatch.StartNew()
-        let mutable checksum = 0L
-        let mutable count = 0L
+    let report name (rounds: int) (elapsed: TimeSpan) (checksum: int64) =
+        let rate = float rounds * float hands / elapsed.TotalSeconds
+        printfn "  %-28s %14s hands/s   (checksum %d)" name ((int64 rate).ToString "N0") checksum
 
-        while stopwatch.Elapsed.TotalSeconds < seconds do
-            for deal in deals do
-                checksum <- checksum + int64 (evaluate deal)
+    printfn "Evaluating for about %.0fs each, %s pre-dealt hands" seconds (hands.ToString "N0")
 
-            count <- count + int64 deals.Length
+    // Each loop is written out rather than passed as a function, so the timing is
+    // the lookup rather than an indirect call around it.
+    let stopwatch = Stopwatch.StartNew()
+    let mutable checksum = 0L
+    let mutable rounds = 0
 
-        let rate = float count / stopwatch.Elapsed.TotalSeconds
-        printfn "  %-28s %12s hands/s   (checksum %d)" name ((int64 rate).ToString("N0")) checksum
+    while stopwatch.Elapsed.TotalSeconds < seconds do
+        let mutable h = 0
 
-    printfn "Evaluating for about %.0fs each" seconds
-    measure "SevenEval.GetRank" (fun d -> int (seven.GetRank(d.[0], d.[1], d.[2], d.[3], d.[4], d.[5], d.[6])))
-    measure "FiveEval.GetRankFromSeven" (fun d -> int (five.GetRankFromSeven(d.[0], d.[1], d.[2], d.[3], d.[4], d.[5], d.[6])))
-    measure "FiveEval.GetRank" (fun d -> int (five.GetRank(d.[0], d.[1], d.[2], d.[3], d.[4])))
+        while h < hands do
+            let b = h * 7
+
+            checksum <-
+                checksum
+                + int64 (seven.GetRank(deals.[b], deals.[b + 1], deals.[b + 2], deals.[b + 3], deals.[b + 4], deals.[b + 5], deals.[b + 6]))
+
+            h <- h + 1
+
+        rounds <- rounds + 1
+
+    report "SevenEval.GetRank" rounds stopwatch.Elapsed checksum
+
+    let stopwatch = Stopwatch.StartNew()
+    let mutable checksum = 0L
+    let mutable rounds = 0
+
+    while stopwatch.Elapsed.TotalSeconds < seconds do
+        let mutable h = 0
+
+        while h < hands do
+            let b = h * 7
+
+            checksum <-
+                checksum
+                + int64 (five.GetRankFromSeven(deals.[b], deals.[b + 1], deals.[b + 2], deals.[b + 3], deals.[b + 4], deals.[b + 5], deals.[b + 6]))
+
+            h <- h + 1
+
+        rounds <- rounds + 1
+
+    report "FiveEval.GetRankFromSeven" rounds stopwatch.Elapsed checksum
+
+    let stopwatch = Stopwatch.StartNew()
+    let mutable checksum = 0L
+    let mutable rounds = 0
+
+    while stopwatch.Elapsed.TotalSeconds < seconds do
+        let mutable h = 0
+
+        while h < hands do
+            let b = h * 7
+
+            checksum <-
+                checksum
+                + int64 (five.GetRank(deals.[b], deals.[b + 1], deals.[b + 2], deals.[b + 3], deals.[b + 4]))
+
+            h <- h + 1
+
+        rounds <- rounds + 1
+
+    report "FiveEval.GetRank" rounds stopwatch.Elapsed checksum
+
+    printfn ""
+    printfn "Throughput here is bound by memory, not arithmetic: the seven-card rank"
+    printfn "table is %.1f MB and every hand lands somewhere random in it. Expect lower" (float (CIRCUMFERENCE_SEVEN * 2) / 1e6)
+    printfn "numbers on a machine with a smaller last-level cache."
     0
 
 // ------------------------------------------------------------------ main ----
