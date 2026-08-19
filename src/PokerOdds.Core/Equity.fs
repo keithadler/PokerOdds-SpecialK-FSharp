@@ -67,31 +67,36 @@ module Equity =
 
             this.Trials <- this.Trials + other.Trials
 
-    /// Award one trial: the best rank takes the pot, or splits it evenly.
-    let private score (ranks: int[]) (tally: Tally) =
+    /// A k-way split is worth 1/k. Looked up rather than divided, because this sits in
+    /// the innermost loop and division is far from free.
+    let private shareOf = Array.init 64 (fun k -> if k = 0 then 0.0 else 1.0 / float k)
+
+    /// Award one trial: the best rank takes the pot, or splits it evenly. Takes the
+    /// running totals as plain arrays so the caller can hoist them out of its loop.
+    let inline private settle (ranks: int[]) (wins: int64[]) (ties: int64[]) (equity: float[]) =
         let n = ranks.Length
         let mutable best = 0
         let mutable winners = 0
 
         for p in 0 .. n - 1 do
-            if ranks.[p] > best then
-                best <- ranks.[p]
+            let r = ranks.[p]
+
+            if r > best then
+                best <- r
                 winners <- 1
-            elif ranks.[p] = best then
+            elif r = best then
                 winners <- winners + 1
 
-        let share = 1.0 / float winners
+        let share = shareOf.[winners]
 
         for p in 0 .. n - 1 do
             if ranks.[p] = best then
                 if winners = 1 then
-                    tally.Wins.[p] <- tally.Wins.[p] + 1L
+                    wins.[p] <- wins.[p] + 1L
                 else
-                    tally.Ties.[p] <- tally.Ties.[p] + 1L
+                    ties.[p] <- ties.[p] + 1L
 
-                tally.Equity.[p] <- tally.Equity.[p] + share
-
-        tally.Trials <- tally.Trials + 1L
+                equity.[p] <- equity.[p] + share
 
     let private validate (request: EquityRequest) =
         let n = request.Hands.Length
@@ -188,15 +193,27 @@ module Equity =
         let seven = SevenEval.Shared
         let total = Tally(n)
 
-        let evaluateBoard (board: int[]) (ranks: int[]) (tally: Tally) =
-            for p in 0 .. n - 1 do
-                ranks.[p] <-
-                    int (seven.GetRank(holes.[p].[0], holes.[p].[1], board.[0], board.[1], board.[2], board.[3], board.[4]))
-
-            score ranks tally
+        // A hand's key is the sum of its cards' weights, so the parts that do not vary
+        // are summed once here rather than seven times per player per board.
+        let cardKey = Array.init DECK_SIZE seven.CardKey
+        let holeKeys = holes |> Array.map (fun h -> cardKey.[h.[0]] + cardKey.[h.[1]])
+        let knownKey = known |> Array.sumBy (fun c -> cardKey.[c])
 
         if need = 0 then
-            evaluateBoard known (Array.zeroCreate n) total
+            let ranks = Array.zeroCreate<int> n
+
+            for p in 0 .. n - 1 do
+                ranks.[p] <-
+                    int (
+                        seven.GetRankFromKey(
+                            holeKeys.[p] + knownKey,
+                            holes.[p].[0], holes.[p].[1],
+                            known.[0], known.[1], known.[2], known.[3], known.[4]
+                        )
+                    )
+
+            settle ranks total.Wins total.Ties total.Equity
+            total.Trials <- 1L
         else
             // Partition on the first card dealt so the work parallelises cleanly.
             let partitions = deck.Length - need + 1
@@ -209,17 +226,35 @@ module Equity =
                     let board = Array.zeroCreate<int> BOARD_CARDS
                     Array.blit known 0 board 0 known.Length
                     let ranks = Array.zeroCreate<int> n
+                    // Pulled out of the recursion so the hot loop touches locals only.
+                    let wins = tally.Wins
+                    let ties = tally.Ties
+                    let equity = tally.Equity
+                    let mutable trials = 0L
 
-                    let rec choose start slot =
+                    let rec choose start slot (boardKey: uint64) =
                         if slot = BOARD_CARDS then
-                            evaluateBoard board ranks tally
+                            for p in 0 .. n - 1 do
+                                ranks.[p] <-
+                                    int (
+                                        seven.GetRankFromKey(
+                                            holeKeys.[p] + boardKey,
+                                            holes.[p].[0], holes.[p].[1],
+                                            board.[0], board.[1], board.[2], board.[3], board.[4]
+                                        )
+                                    )
+
+                            settle ranks wins ties equity
+                            trials <- trials + 1L
                         else
                             for i in start .. deck.Length - (BOARD_CARDS - slot) do
-                                board.[slot] <- deck.[i]
-                                choose (i + 1) (slot + 1)
+                                let card = deck.[i]
+                                board.[slot] <- card
+                                choose (i + 1) (slot + 1) (boardKey + cardKey.[card])
 
                     board.[known.Length] <- deck.[first]
-                    choose (first + 1) (known.Length + 1)
+                    choose (first + 1) (known.Length + 1) (knownKey + cardKey.[deck.[first]])
+                    tally.Trials <- tally.Trials + trials
                     tally),
                 (fun tally -> lock total (fun () -> total.Merge tally))
             )
@@ -243,6 +278,7 @@ module Equity =
         let unknownPlayers = [| for p in 0 .. n - 1 do if holes.[p].Length = 0 then yield p |]
         let draws = boardNeed + unknownPlayers.Length * HOLE_CARDS
         let seven = SevenEval.Shared
+        let cardKey = Array.init DECK_SIZE seven.CardKey
         let total = Tally(n)
 
         let chunks = int (min (int64 MONTE_CARLO_CHUNKS) trials)
@@ -264,6 +300,15 @@ module Equity =
                 for p in unknownPlayers do
                     hands.[p] <- Array.zeroCreate HOLE_CARDS
                 let ranks = Array.zeroCreate<int> n
+                // Known players' hole keys never change; only the dealt ones are redone.
+                let holeKeys = Array.zeroCreate<uint64> n
+                for p in 0 .. n - 1 do
+                    if holes.[p].Length = HOLE_CARDS then
+                        holeKeys.[p] <- cardKey.[holes.[p].[0]] + cardKey.[holes.[p].[1]]
+                let wins = tally.Wins
+                let ties = tally.Ties
+                let equity = tally.Equity
+                let mutable trials = 0L
                 let count = baseTrials + (if int64 chunk < remainder then 1L else 0L)
 
                 for _ in 1L .. count do
@@ -283,18 +328,29 @@ module Equity =
                     for p in unknownPlayers do
                         hands.[p].[0] <- bag.[next]
                         hands.[p].[1] <- bag.[next + 1]
+                        holeKeys.[p] <- cardKey.[bag.[next]] + cardKey.[bag.[next + 1]]
                         next <- next + 2
+
+                    // Summed once, then shared by every player at this board.
+                    let mutable boardKey = 0UL
+
+                    for slot in 0 .. BOARD_CARDS - 1 do
+                        boardKey <- boardKey + cardKey.[board.[slot]]
 
                     for p in 0 .. n - 1 do
                         ranks.[p] <-
                             int (
-                                seven.GetRank(
-                                    hands.[p].[0], hands.[p].[1], board.[0], board.[1], board.[2], board.[3], board.[4]
+                                seven.GetRankFromKey(
+                                    holeKeys.[p] + boardKey,
+                                    hands.[p].[0], hands.[p].[1],
+                                    board.[0], board.[1], board.[2], board.[3], board.[4]
                                 )
                             )
 
-                    score ranks tally
+                    settle ranks wins ties equity
+                    trials <- trials + 1L
 
+                tally.Trials <- tally.Trials + trials
                 tally),
             (fun tally -> lock total (fun () -> total.Merge tally))
         )

@@ -170,6 +170,7 @@ let ``there are 49205 seven-card face patterns and each has a distinct key`` () 
 
     Assert.Equal(folded.Length, (Set.ofArray folded).Count)
     Assert.True(Array.max folded < CIRCUMFERENCE_SEVEN)
+    Assert.Equal(CIRCUMFERENCE_SEVEN, seven.RankTableSize)
 
 [<Fact>]
 let ``every face pattern deals into seven distinct cards with no flush`` () =

@@ -4,10 +4,10 @@ A fast Texas Hold'em hand evaluator and equity calculator in F#, built on an F# 
 [Kenneth J. Shackleton's SKPokerEval](https://github.com/kennethshackleton/SKPokerEval)
 perfect-hash tables.
 
-Ranking a seven-card hand costs one array lookup — around **200 million hands per second**
-on a single core — which is what makes exhaustive equity enumeration practical: every
-one of the 1,712,304 possible boards for a preflop match-up is dealt in about a tenth
-of a second.
+Ranking a seven-card hand costs one array lookup — around **250 million hands per second**
+on a single core — which is what makes exhaustive equity enumeration practical: all
+1,712,304 possible boards for a preflop match-up are dealt and scored in about six
+milliseconds.
 
 ```
 $ pokerodds equity --hand AsKs --hand QdQh
@@ -172,34 +172,77 @@ CI runs the exhaustive check on Linux, Windows and macOS on every commit.
 
 | | Hands per second |
 | --- | ---: |
-| `SevenEval.GetRank` | 206,000,000 |
-| `FiveEval.GetRank` | 229,000,000 |
-| `FiveEval.GetRankFromSeven` (best of 21) | 5,700,000 |
+| `SevenEval.GetRank` | 250,000,000 |
+| `FiveEval.GetRank` | 238,000,000 |
+| `FiveEval.GetRankFromSeven` (best of 21) | 5,800,000 |
+
+Equity, best of several runs, after the tables are built:
+
+| | |
+| --- | ---: |
+| Preflop heads up (1,712,304 boards) | 6.2 ms |
+| Monte Carlo, 2,000,000 trials | 16 ms |
+| Building the tables, once per process | 30 ms |
 
 These are bound by memory, not arithmetic, so treat them as an upper bound rather than
 a promise. Every hand lands somewhere effectively random in the 9.1 MB seven-card rank
 table, and an Apple M-series last-level cache holds far more of that than a typical x86
 server's does. Equity enumeration is parallel across cores.
 
-### Where the remaining speed is
+### What was tried, and what it was worth
 
-Two things are knowingly left on the table.
+Three changes paid off and are in:
 
-**The rank table is 85 times larger than it needs to be.** Upstream compresses the
-seven-card ranks into `rank_hash` plus an `offsets` indirection — 30,230 and 16,384
-entries, about 110 KB all told, which sits in L2 on any machine. Indexing the folded key
-directly, as this port does, costs 4,565,145 entries — 9.1 MB, which does not. The
-direct table is what makes the port readable and lets the seven-card path be derived
-from and checked against the five-card one, so it is a deliberate trade, but it is the
-single biggest lever on raw lookup speed.
+**Letting the JIT inline the lookup.** Splitting `GetRank` so that the key could be
+supplied ready-made put a call boundary in the hot path, and the method was just big
+enough — because of the flush branch — that the JIT stopped inlining it. That alone cost
+about a fifth of throughput, and it made every measurement noisy. Marking
+`GetRankFromKey` for aggressive inlining took `SevenEval.GetRank` from 206 to 250 million
+hands per second, better than before the split.
 
-**Equity enumeration rebuilds each key from scratch.** `Equity.exact` currently reaches
-about 34 million evaluations per second across all cores while one core alone can do 206
-million, because every board re-reads all seven card weights for every player. Since a
-hand's key is just the sum of its cards' weights, a player's two hole cards and the board
-can each be summed once and added — one addition per player per board instead of seven
-lookups — and the board's partial sum can be carried down the enumeration's loop nest
-rather than rebuilt. There is a large factor here for anyone who needs it.
+
+**Hoisting the key out of the enumeration loop.** A hand's key is the sum of its cards'
+weights, so `Equity.exact` now sums each player's hole cards once and carries the board's
+partial sum down the enumeration, instead of re-reading all seven weights per player per
+board. `SevenEval.CardKey` and `GetRankFromKey` expose the same split to callers. Scoring
+also lost a floating-point division per board in favour of a small reciprocal table.
+Worth about 15% on its own — less than hoped, because the loop was already running at
+several hundred million evaluations per second. Together with the inlining fix, preflop
+enumeration went from 10.6 ms to 6.2 ms and two million Monte Carlo trials from 26 ms to
+16 ms.
+
+**Building the tables in parallel.** Ranking the 49,205 face patterns is about a million
+five-card evaluations and is the bulk of construction. It parallelises with no
+coordination, since each pattern writes to its own key. Construction dropped from roughly
+66 ms to about 30 ms, which matters mainly for one-shot command line runs, where building
+the table costs more than the work being asked for.
+
+One change was tried and rejected:
+
+**Compressing the rank table.** Upstream stores the seven-card ranks through a hash and
+an offsets indirection rather than at the key itself, which is why its tables are about
+110 KB against this port's 9.1 MB. That was implemented here — Shackleton's hash constants
+turn out to be injective over these keys, and greedy row displacement packs all 49,205
+entries with no waste, giving a 96 KB table. It was then removed, because on the machine
+it was measured on it made evaluation *slower*: about 160 million hands per second against
+206 million for the direct table at the time, since the hash and the extra dependent lookup cost more
+than the cache misses they avoid on a chip with a large last-level cache. It also added
+roughly 800 ms to construction, as the packing search is slow once the table is nearly
+full.
+
+That result is hardware-specific and would likely reverse on a machine with a smaller
+last-level cache, where 9.1 MB does not stay resident. Anyone hitting that case should
+reach for the compressed layout; it is a real win there, just not here.
+
+What is left, in rough order of what it would be worth:
+
+* **Suit isomorphism.** Many boards are the same hand up to a relabelling of suits.
+  Collapsing them is exact, not an approximation, and cuts the work several-fold — a
+  bigger factor than anything above.
+* **Evaluating several boards at once** with SIMD gathers, to overlap the memory
+  latency that currently sets the ceiling.
+* **Skipping construction entirely** by shipping the tables as a resource, if the ~30 ms
+  startup ever matters more than the 9 MB.
 
 ## Credit and licence
 

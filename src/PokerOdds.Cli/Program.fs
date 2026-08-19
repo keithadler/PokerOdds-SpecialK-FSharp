@@ -370,9 +370,9 @@ let private runBench args =
     report "FiveEval.GetRank" rounds stopwatch.Elapsed checksum
 
     printfn ""
-    printfn "Throughput here is bound by memory, not arithmetic: the seven-card rank"
-    printfn "table is %.1f MB and every hand lands somewhere random in it. Expect lower" (float (CIRCUMFERENCE_SEVEN * 2) / 1e6)
-    printfn "numbers on a machine with a smaller last-level cache."
+    printfn "The seven-card rank table holds %s entries (%.1f MB), so throughput here is"
+        (seven.RankTableSize.ToString "N0") (float seven.RankTableSize * 2.0 / 1e6)
+    printfn "bound by memory. Expect less on a machine with a smaller last-level cache."
     0
 
 // ------------------------------------------------------------------ main ----

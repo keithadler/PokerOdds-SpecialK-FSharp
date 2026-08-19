@@ -1,5 +1,7 @@
 namespace PokerOdds.SpecialK
 
+open System.Runtime.CompilerServices
+open System.Threading.Tasks
 open FiveCardEvaluator
 
 /// Seven-card evaluator, ported from Kenneth J. Shackleton's SKPokerEval
@@ -100,21 +102,41 @@ module SevenCardEvaluator =
                     deckKey.[N + suit] <- start + uint64 SUITS.[suit]
                     deckFlush.[N + suit] <- uint16 faceFlush.[n]
 
+        // Ranking all 49205 patterns means about a million five-card evaluations, which
+        // is the bulk of construction. The patterns are independent and each writes to
+        // its own key, so this parallelises without any coordination.
         let setNonFlushRanks () =
-            let cards = Array.zeroCreate<int> 7
+            let patterns = faceMultisets ()
 
-            for faces in faceMultisets () do
-                dealWithoutFlush faces cards
+            // Chunked, because each pattern is only about a microsecond of work and
+            // handing them out one at a time costs more than doing them.
+            let chunk = 512
+            let chunks = (patterns.Count + chunk - 1) / chunk
 
-                let rank =
-                    five.GetRankFromSeven(cards.[0], cards.[1], cards.[2], cards.[3], cards.[4], cards.[5], cards.[6])
+            Parallel.For(
+                0,
+                chunks,
+                fun c ->
+                    let cards = Array.zeroCreate<int> 7
+                    let stop = min patterns.Count ((c + 1) * chunk)
 
-                let mutable key = 0
+                    for i in c * chunk .. stop - 1 do
+                        let faces = patterns.[i]
+                        dealWithoutFlush faces cards
 
-                for f in faces do
-                    key <- key + face.[f]
+                        let rank =
+                            five.GetRankFromSeven(
+                                cards.[0], cards.[1], cards.[2], cards.[3], cards.[4], cards.[5], cards.[6]
+                            )
 
-                rankTable.[if key < CIRCUMFERENCE_SEVEN then key else key - CIRCUMFERENCE_SEVEN] <- rank
+                        let mutable key = 0
+
+                        for f in faces do
+                            key <- key + face.[f]
+
+                        rankTable.[if key < CIRCUMFERENCE_SEVEN then key else key - CIRCUMFERENCE_SEVEN] <- rank
+            )
+            |> ignore
 
         // A hand holding five or more cards of one suit can hold neither quads nor a
         // full house, so its flush is always its best five-card hand. That lets each
@@ -194,12 +216,28 @@ module SevenCardEvaluator =
         /// constructor, so this only reports the number of distinct ranks (7462).
         member _.Initialize() = NUMBER_OF_RANKS
 
+        /// The weight of a single card. Keys add, so a hand's key is the sum of its
+        /// cards' weights. Anything looping over many hands that share cards should sum
+        /// the shared part once and hand the total to `GetRankFromKey` rather than pay
+        /// for seven lookups per hand.
+        member _.CardKey(card: int) = deckKey.[card]
+
+        /// How many entries the seven-card rank table holds.
+        member _.RankTableSize = rankTable.Length
+
         /// The rank of a seven-card hand. Cards must be distinct indices in 0..51.
-        member _.GetRank(c1, c2, c3, c4, c5, c6, c7) =
+        member this.GetRank(c1, c2, c3, c4, c5, c6, c7) =
             let key =
                 deckKey.[c1] + deckKey.[c2] + deckKey.[c3] + deckKey.[c4]
                 + deckKey.[c5] + deckKey.[c6] + deckKey.[c7]
 
+            this.GetRankFromKey(key, c1, c2, c3, c4, c5, c6, c7)
+
+        /// The rank of a seven-card hand whose key has already been summed from
+        /// `CardKey`. The cards are still needed, but only on the roughly three per cent
+        /// of hands that hold a flush, where the suited faces have to be picked out.
+        [<MethodImpl(MethodImplOptions.AggressiveInlining)>]
+        member _.GetRankFromKey(key: uint64, c1, c2, c3, c4, c5, c6, c7) =
             let flushSuit = int flushCheck.[int (key &&& SUIT_BIT_MASK)]
 
             if flushSuit = NOT_A_FLUSH then
